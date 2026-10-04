@@ -1,0 +1,25 @@
+name: Notify Telegram on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send release notification to Telegram
+        uses: Salmansha08/telegram-github-action@main
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message_thread_id: ${{ secrets.TELEGRAM_THREAD_ID }}
+          message: |
+            🚀 *Новый релиз MinionVPN*
+
+            *${{ github.event.release.name }}*
+            Тег: `${{ github.event.release.tag_name }}`
+
+            ${{ github.event.release.body }}
+
+            [Открыть на GitHub](${{ github.event.release.html_url }})
