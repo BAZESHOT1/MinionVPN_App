@@ -21,16 +21,27 @@ jobs:
           RELEASE_URL: ${{ github.event.release.html_url }}
           RELEASE_BODY: ${{ github.event.release.body }}
         run: |
-          # Экранируем спецсимволы MarkdownV2
-          ESCAPED_NAME=$(printf '%s' "$RELEASE_NAME" | sed 's/[][\\`*_{}()#+\-.!]/\\&/g')
-          ESCAPED_TAG=$(printf '%s' "$RELEASE_TAG" | sed 's/[][\\`*_{}()#+\-.!]/\\&/g')
-          ESCAPED_BODY=$(printf '%s' "$RELEASE_BODY" | sed 's/[][\\`*_{}()#+\-.!]/\\&/g')
+          # HTML-escape: только &, <, >
+          escape_html() {
+            printf '%s' "$1" \
+              | sed 's/&/\&amp;/g' \
+              | sed 's/</\&lt;/g' \
+              | sed 's/>/\&gt;/g'
+          }
 
-          TEXT=$(printf '🚀 *Новый релиз MinionVPN*\n\n*%s*\nТег: `%s`\n\n%s\n\n[Открыть на GitHub](%s)' \
-            "$ESCAPED_NAME" \
-            "$ESCAPED_TAG" \
-            "$ESCAPED_BODY" \
-            "$RELEASE_URL")
+          ESCAPED_NAME=$(escape_html "$RELEASE_NAME")
+          ESCAPED_TAG=$(escape_html "$RELEASE_TAG")
+          ESCAPED_BODY=$(escape_html "$RELEASE_BODY")
+          ESCAPED_URL=$(escape_html "$RELEASE_URL")
+
+          TEXT="<b>🚀 Новый релиз MinionVPN</b>
+
+          <b>${ESCAPED_NAME}</b>
+          Тег: <code>${ESCAPED_TAG}</code>
+
+          ${ESCAPED_BODY}
+
+          <a href=\"${ESCAPED_URL}\">Открыть на GitHub</a>"
 
           echo "Отправляем в chat_id=$CHAT_ID, thread_id=$THREAD_ID"
           echo "Текст сообщения:"
@@ -41,7 +52,7 @@ jobs:
             "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT_ID}" \
             --data-urlencode "message_thread_id=${THREAD_ID}" \
-            --data-urlencode "parse_mode=MarkdownV2" \
+            --data-urlencode "parse_mode=HTML" \
             --data-urlencode "disable_web_page_preview=false" \
             --data-urlencode "text=${TEXT}" \
             -o /tmp/response.json \
