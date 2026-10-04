@@ -14,8 +14,11 @@ jobs:
       - name: Send release notification to Telegram
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
+          # Закрытая группа (для разработчиков)
+          CHAT_ID_GROUP: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THREAD_ID_GROUP: ${{ secrets.TELEGRAM_THREAD_ID }}
+          # Публичный канал-сообщество
+          CHAT_ID_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           RELEASE_NAME: ${{ github.event.release.name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
@@ -30,24 +33,45 @@ jobs:
               | sed 's/>/\&gt;/g'
           }
 
+          # Markdown → Telegram-HTML.
+          # ВАЖНО: применяется ПОСЛЕ escape_html, чтобы уже готовые
+          # теги <b>, <i>, <code>, <a> не были повторно экранированы.
+          md_to_html() {
+            local text="$1"
+            # 1) Ссылки [text](url) → <a href="url">text</a>
+            text=$(printf '%s' "$text" | sed -E 's/\[([^]]+)\]\(([^)]+)\)/<a href="\2">\1<\/a>/g')
+            # 2) Жирный: **text** → <b>text</b>
+            text=$(printf '%s' "$text" | sed -E 's/\*\*([^*]+)\*\*/<b>\1<\/b>/g')
+            # 3) Курсив: *text* → <i>text</i>
+            text=$(printf '%s' "$text" | sed -E 's/\*([^*]+)\*/<i>\1<\/i>/g')
+            # 4) Inline-код: `code` → <code>code</code>
+            text=$(printf '%s' "$text" | sed -E 's/`([^`]+)`/<code>\1<\/code>/g')
+            # 5) Заголовки ## text → <b>text</b>
+            text=$(printf '%s' "$text" | sed -E 's/^#{1,6}[[:space:]]+(.*)$/<b>\1<\/b>/g')
+            # 6) Списки - item / * item → • item
+            text=$(printf '%s' "$text" | sed -E 's/^[[:space:]]*[-*][[:space:]]+/• /g')
+            printf '%s' "$text"
+          }
+
           ESCAPED_NAME=$(escape_html "$RELEASE_NAME")
           ESCAPED_TAG=$(escape_html "$RELEASE_TAG")
-          ESCAPED_BODY=$(escape_html "$RELEASE_BODY")
 
-          # --- Текст сообщения ---
+          # Сначала экранируем HTML-спецсимволы, потом конвертируем
+          # Markdown-разметку в HTML.
+          BODY_ESCAPED=$(escape_html "$RELEASE_BODY")
+          BODY_HTML=$(md_to_html "$BODY_ESCAPED")
+
           TEXT="<b>Новый релиз приложения на GitHub🎉</b>
 
           <b>${ESCAPED_NAME}</b>
           Тег: <code>${ESCAPED_TAG}</code>
 
           <b>Описание:</b>
-          ${ESCAPED_BODY}
+          ${BODY_HTML}
 
           <b>Ссылка на релиз:</b> <a href=\"${RELEASE_URL}\">${RELEASE_URL}</a>"
 
           # --- Собираем inline-кнопки из ассетов релиза ---
-          # ВАЖНО: label — зарезервированное слово в jq, поэтому
-          # называем функцию human_name.
           ASSETS_TEXT=$(printf '%s' "$RELEASE_ASSETS" | jq -r '
             def human_name(name):
               (name | ascii_downcase) as $n
@@ -63,15 +87,11 @@ jobs:
                 elif ($n | endswith(".appimage")) then "Linux (AppImage)"
                 elif ($n | endswith(".zip"))  then "ZIP-архив"
                 elif ($n | endswith(".tar.gz")) then "TAR.GZ"
-                elif ($n | endswith(".txt"))  then "" + name
-                elif ($n | endswith(".md"))   then "" + name
                 else "" + name
                 end;
-
             [ .[] | { "text": human_name(.name), "url": .browser_download_url } ]
           ')
 
-          # Формируем итоговый reply_markup для Telegram
           ASSET_COUNT=$(printf '%s' "$ASSETS_TEXT" | jq 'length')
           if [ "$ASSET_COUNT" -gt 0 ]; then
             REPLY_MARKUP=$(printf '%s' "$ASSETS_TEXT" | jq -c '{ inline_keyboard: ([.[] | [.]] ) }')
@@ -79,37 +99,64 @@ jobs:
             REPLY_MARKUP=""
           fi
 
-          echo "Отправляем в chat_id=$CHAT_ID, thread_id=$THREAD_ID"
-          echo "Текст сообщения:"
-          echo "$TEXT"
-          echo "---"
+          echo "=== Отправка в группу ==="
+          echo "chat_id=$CHAT_ID_GROUP, thread_id=$THREAD_ID_GROUP"
           echo "Ассетов: $ASSET_COUNT"
-          echo "Reply markup:"
-          echo "$REPLY_MARKUP"
+          echo "Reply markup: $REPLY_MARKUP"
           echo "---"
 
+          # --- 1. Отправка в ЗАКРЫТУЮ ГРУППУ ---
           if [ -n "$REPLY_MARKUP" ]; then
             curl -sS -X POST \
               "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-              --data-urlencode "chat_id=${CHAT_ID}" \
-              --data-urlencode "message_thread_id=${THREAD_ID}" \
+              --data-urlencode "chat_id=${CHAT_ID_GROUP}" \
+              --data-urlencode "message_thread_id=${THREAD_ID_GROUP}" \
               --data-urlencode "parse_mode=HTML" \
               --data-urlencode "disable_web_page_preview=true" \
               --data-urlencode "text=${TEXT}" \
               --data-urlencode "reply_markup=${REPLY_MARKUP}" \
-              -o /tmp/response.json \
-              -w "HTTP %{http_code}\n"
+              -o /tmp/response_group.json \
+              -w "Group HTTP %{http_code}\n"
           else
             curl -sS -X POST \
               "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-              --data-urlencode "chat_id=${CHAT_ID}" \
-              --data-urlencode "message_thread_id=${THREAD_ID}" \
+              --data-urlencode "chat_id=${CHAT_ID_GROUP}" \
+              --data-urlencode "message_thread_id=${THREAD_ID_GROUP}" \
               --data-urlencode "parse_mode=HTML" \
               --data-urlencode "disable_web_page_preview=true" \
               --data-urlencode "text=${TEXT}" \
-              -o /tmp/response.json \
-              -w "HTTP %{http_code}\n"
+              -o /tmp/response_group.json \
+              -w "Group HTTP %{http_code}\n"
           fi
+          echo "Ответ группы:"
+          cat /tmp/response_group.json
+          echo
 
-          echo "Ответ Telegram:"
-          cat /tmp/response.json
+          echo "=== Отправка в канал ==="
+          echo "chat_id=$CHAT_ID_CHANNEL"
+          echo "---"
+
+          # --- 2. Отправка в КАНАЛ-СООБЩЕСТВО ---
+          # В каналах нет message_thread_id, поэтому не передаём.
+          if [ -n "$REPLY_MARKUP" ]; then
+            curl -sS -X POST \
+              "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID_CHANNEL}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "disable_web_page_preview=true" \
+              --data-urlencode "text=${TEXT}" \
+              --data-urlencode "reply_markup=${REPLY_MARKUP}" \
+              -o /tmp/response_channel.json \
+              -w "Channel HTTP %{http_code}\n"
+          else
+            curl -sS -X POST \
+              "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID_CHANNEL}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "disable_web_page_preview=true" \
+              --data-urlencode "text=${TEXT}" \
+              -o /tmp/response_channel.json \
+              -w "Channel HTTP %{http_code}\n"
+          fi
+          echo "Ответ канала:"
+          cat /tmp/response_channel.json
