@@ -46,10 +46,10 @@ jobs:
           <b>Ссылка на релиз:</b> <a href=\"${RELEASE_URL}\">${RELEASE_URL}</a>"
 
           # --- Собираем inline-кнопки из ассетов релиза ---
-          # Для каждого файла — своя кнопка с человекочитаемым текстом.
+          # ВАЖНО: label — зарезервированное слово в jq, поэтому
+          # называем функцию human_name.
           ASSETS_TEXT=$(printf '%s' "$RELEASE_ASSETS" | jq -r '
-            # Функция: по расширению файла выбрать "человеческое" имя.
-            def label(name):
+            def human_name(name):
               (name | ascii_downcase) as $n
               | if   ($n | endswith(".exe"))  then "Windows (EXE)"
                 elif ($n | endswith(".msi"))  then "Windows (MSI)"
@@ -68,12 +68,12 @@ jobs:
                 else "" + name
                 end;
 
-            # Собираем массив строк вида { "text": ..., "url": ... }
-            [ .[] | { "text": label(.name), "url": .browser_download_url } ]
+            [ .[] | { "text": human_name(.name), "url": .browser_download_url } ]
           ')
 
           # Формируем итоговый reply_markup для Telegram
-          if [ "$(printf '%s' "$ASSETS_TEXT" | jq 'length')" -gt 0 ]; then
+          ASSET_COUNT=$(printf '%s' "$ASSETS_TEXT" | jq 'length')
+          if [ "$ASSET_COUNT" -gt 0 ]; then
             REPLY_MARKUP=$(printf '%s' "$ASSETS_TEXT" | jq -c '{ inline_keyboard: ([.[] | [.]] ) }')
           else
             REPLY_MARKUP=""
@@ -83,6 +83,7 @@ jobs:
           echo "Текст сообщения:"
           echo "$TEXT"
           echo "---"
+          echo "Ассетов: $ASSET_COUNT"
           echo "Reply markup:"
           echo "$REPLY_MARKUP"
           echo "---"
