@@ -4,22 +4,48 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
       - name: Send release notification to Telegram
-        uses: Salmansha08/telegram-github-action@main
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          message_thread_id: ${{ secrets.TELEGRAM_THREAD_ID }}
-          message: |
-            🚀 *Новый релиз MinionVPN*
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          # Экранируем спецсимволы MarkdownV2
+          ESCAPED_NAME=$(printf '%s' "$RELEASE_NAME" | sed 's/[][\\`*_{}()#+\-.!]/\\&/g')
+          ESCAPED_TAG=$(printf '%s' "$RELEASE_TAG" | sed 's/[][\\`*_{}()#+\-.!]/\\&/g')
+          ESCAPED_BODY=$(printf '%s' "$RELEASE_BODY" | sed 's/[][\\`*_{}()#+\-.!]/\\&/g')
 
-            *${{ github.event.release.name }}*
-            Тег: `${{ github.event.release.tag_name }}`
+          TEXT=$(printf '🚀 *Новый релиз MinionVPN*\n\n*%s*\nТег: `%s`\n\n%s\n\n[Открыть на GitHub](%s)' \
+            "$ESCAPED_NAME" \
+            "$ESCAPED_TAG" \
+            "$ESCAPED_BODY" \
+            "$RELEASE_URL")
 
-            ${{ github.event.release.body }}
+          echo "Отправляем в chat_id=$CHAT_ID, thread_id=$THREAD_ID"
+          echo "Текст сообщения:"
+          echo "$TEXT"
+          echo "---"
 
-            [Открыть на GitHub](${{ github.event.release.html_url }})
+          curl -sS -X POST \
+            "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT_ID}" \
+            --data-urlencode "message_thread_id=${THREAD_ID}" \
+            --data-urlencode "parse_mode=MarkdownV2" \
+            --data-urlencode "disable_web_page_preview=false" \
+            --data-urlencode "text=${TEXT}" \
+            -o /tmp/response.json \
+            -w "HTTP %{http_code}\n"
+
+          echo "Ответ Telegram:"
+          cat /tmp/response.json
