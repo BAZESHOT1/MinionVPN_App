@@ -20,6 +20,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
           RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_ASSETS: ${{ toJson(github.event.release.assets) }}
         run: |
           # HTML-escape: только &, <, >
           escape_html() {
@@ -32,31 +33,82 @@ jobs:
           ESCAPED_NAME=$(escape_html "$RELEASE_NAME")
           ESCAPED_TAG=$(escape_html "$RELEASE_TAG")
           ESCAPED_BODY=$(escape_html "$RELEASE_BODY")
-          ESCAPED_URL=$(escape_html "$RELEASE_URL")
 
-          TEXT="<b>🚀 Новый релиз MinionVPN</b>
+          # --- Текст сообщения ---
+          TEXT="<b>Новый релиз приложения на GitHub🎉</b>
 
           <b>${ESCAPED_NAME}</b>
           Тег: <code>${ESCAPED_TAG}</code>
 
+          <b>Описание:</b>
           ${ESCAPED_BODY}
 
-          <a href=\"${ESCAPED_URL}\">Открыть на GitHub</a>"
+          <b>Ссылка на релиз:</b> <a href=\"${RELEASE_URL}\">${RELEASE_URL}</a>"
+
+          # --- Собираем inline-кнопки из ассетов релиза ---
+          # Для каждого файла — своя кнопка с человекочитаемым текстом.
+          ASSETS_TEXT=$(printf '%s' "$RELEASE_ASSETS" | jq -r '
+            # Функция: по расширению файла выбрать "человеческое" имя.
+            def label(name):
+              (name | ascii_downcase) as $n
+              | if   ($n | endswith(".exe"))  then "🪟 Windows (EXE)"
+                elif ($n | endswith(".msi"))  then "🪟 Windows (MSI)"
+                elif ($n | endswith(".apk"))  then "🤖 Android (APK)"
+                elif ($n | endswith(".aab"))  then "🤖 Android (AAB)"
+                elif ($n | endswith(".dmg"))  then "🍎 macOS (DMG)"
+                elif ($n | endswith(".pkg"))  then "🍎 macOS (PKG)"
+                elif ($n | endswith(".ipa"))  then "🍏 iOS (IPA)"
+                elif ($n | endswith(".deb"))  then "🐧 Linux (DEB)"
+                elif ($n | endswith(".rpm"))  then "🐧 Linux (RPM)"
+                elif ($n | endswith(".appimage")) then "🐧 Linux (AppImage)"
+                elif ($n | endswith(".zip"))  then "📦 ZIP-архив"
+                elif ($n | endswith(".tar.gz")) then "📦 TAR.GZ"
+                elif ($n | endswith(".txt"))  then "📄 " + name
+                elif ($n | endswith(".md"))   then "📄 " + name
+                else "📎 " + name
+                end;
+
+            # Собираем массив строк вида { "text": ..., "url": ... }
+            [ .[] | { "text": label(.name), "url": .browser_download_url } ]
+          ')
+
+          # Формируем итоговый reply_markup для Telegram
+          if [ "$(printf '%s' "$ASSETS_TEXT" | jq 'length')" -gt 0 ]; then
+            REPLY_MARKUP=$(printf '%s' "$ASSETS_TEXT" | jq -c '{ inline_keyboard: ([.[] | [.]] ) }')
+          else
+            REPLY_MARKUP=""
+          fi
 
           echo "Отправляем в chat_id=$CHAT_ID, thread_id=$THREAD_ID"
           echo "Текст сообщения:"
           echo "$TEXT"
           echo "---"
+          echo "Reply markup:"
+          echo "$REPLY_MARKUP"
+          echo "---"
 
-          curl -sS -X POST \
-            "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${CHAT_ID}" \
-            --data-urlencode "message_thread_id=${THREAD_ID}" \
-            --data-urlencode "parse_mode=HTML" \
-            --data-urlencode "disable_web_page_preview=false" \
-            --data-urlencode "text=${TEXT}" \
-            -o /tmp/response.json \
-            -w "HTTP %{http_code}\n"
+          if [ -n "$REPLY_MARKUP" ]; then
+            curl -sS -X POST \
+              "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "message_thread_id=${THREAD_ID}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "disable_web_page_preview=true" \
+              --data-urlencode "text=${TEXT}" \
+              --data-urlencode "reply_markup=${REPLY_MARKUP}" \
+              -o /tmp/response.json \
+              -w "HTTP %{http_code}\n"
+          else
+            curl -sS -X POST \
+              "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${CHAT_ID}" \
+              --data-urlencode "message_thread_id=${THREAD_ID}" \
+              --data-urlencode "parse_mode=HTML" \
+              --data-urlencode "disable_web_page_preview=true" \
+              --data-urlencode "text=${TEXT}" \
+              -o /tmp/response.json \
+              -w "HTTP %{http_code}\n"
+          fi
 
           echo "Ответ Telegram:"
           cat /tmp/response.json
