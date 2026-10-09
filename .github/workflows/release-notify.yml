@@ -64,7 +64,6 @@ jobs:
           TEXT="<b>Новый релиз приложения на GitHub🎉</b>
 
           <b>${ESCAPED_NAME}</b>
-          Тег: <code>${ESCAPED_TAG}</code>
 
           <b>Описание:</b>
           ${BODY_HTML}
